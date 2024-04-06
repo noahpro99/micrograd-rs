@@ -1,6 +1,7 @@
 use std::{
     cell::RefCell,
     collections::HashSet,
+    iter::Sum,
     ops::{Add, Mul},
     ptr::NonNull,
     rc::Rc,
@@ -70,6 +71,12 @@ impl Mul<&Value> for &Value {
                 *other_grad.borrow_mut() += *out.grad.borrow() * *self_value.borrow();
             })),
         )
+    }
+}
+
+impl Sum for Value {
+    fn sum<I: Iterator<Item = Value>>(iter: I) -> Value {
+        iter.fold(Value::new(0.0, None), |acc, x| &acc + &x)
     }
 }
 
