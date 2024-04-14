@@ -41,7 +41,7 @@ impl Value {
         }
     }
 
-    pub fn backward(&mut self) {
+    pub fn back_prop(&mut self) {
         self.grad = Rc::new(RefCell::new(1.0));
         let mut sort: Vec<&Value> = vec![];
         let mut visited: HashSet<NonNull<&Value>> = HashSet::new();
@@ -106,7 +106,7 @@ mod tests {
         let v1 = Value::new(2.0, None);
         let v2 = Value::new(3.0, None);
         let mut v3 = &v1 + &v2;
-        v3.backward();
+        v3.back_prop();
 
         assert_eq!(v3.value.borrow().to_owned(), 5.0);
         assert_eq!(v1.grad.borrow().to_owned(), 1.0);
@@ -118,7 +118,7 @@ mod tests {
         let v1 = Value::new(2.0, None);
         let v2 = Value::new(3.0, None);
         let mut v3 = &v1 * &v2;
-        v3.backward();
+        v3.back_prop();
 
         assert_eq!(v3.value.borrow().to_owned(), 6.0);
         assert_eq!(v1.grad.borrow().to_owned(), 3.0);

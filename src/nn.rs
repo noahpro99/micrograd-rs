@@ -56,10 +56,6 @@ impl NN {
         }
         output
     }
-
-    pub fn backward(&self, output: &mut Vec<Value>) {
-        output.iter_mut().for_each(|output| output.backward());
-    }
 }
 
 #[cfg(test)]
