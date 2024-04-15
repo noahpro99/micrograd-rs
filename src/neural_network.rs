@@ -6,11 +6,11 @@ struct Layer {
     activation: fn(Value) -> Value,
 }
 
-pub struct NN {
+pub struct NeuralNetwork {
     layers: Vec<Layer>,
 }
 
-impl NN {
+impl NeuralNetwork {
     pub fn new() -> Self {
         Self { layers: Vec::new() }
     }
@@ -37,6 +37,16 @@ impl NN {
         });
     }
 
+    pub fn parameters(&self) -> impl Iterator<Item = &Value> {
+        self.layers.iter().flat_map(|layer| {
+            layer
+                .weights
+                .iter()
+                .flat_map(|weights| weights.iter())
+                .chain(layer.biases.iter())
+        })
+    }
+
     pub fn forward(&self, input: Vec<Value>) -> Vec<Value> {
         let mut output = input;
         for layer in &self.layers {
@@ -60,11 +70,17 @@ impl NN {
 
 #[cfg(test)]
 mod tests {
+
+    use plotly::{
+        common::Mode,
+        Plot, Scatter,
+    };
+
     use super::*;
 
     #[test]
     fn test_nn() {
-        let mut nn = NN::new();
+        let mut nn = NeuralNetwork::new();
         nn.add_layer((2, 3), Value::relu);
         nn.add_layer((3, 1), Value::relu);
         let input = vec![Value::new(1.0, None), Value::new(2.0, None)];
@@ -80,7 +96,7 @@ mod tests {
                 if raw.value.borrow().is_sign_positive() {
                     1.0
                 } else {
-                    -1.0
+                    0.0
                 },
                 None,
             )
@@ -92,24 +108,52 @@ mod tests {
                 (-3..=3).map(move |y| (Value::new(x as f32, None), Value::new(y as f32, None)))
             })
             .collect::<Vec<_>>();
-        let test_data = grid.iter().map(|(x, y)| (x, y, test_fn((x, y))));
+        let test_data = grid
+            .iter()
+            .map(|(x, y)| ((x, y), test_fn((x, y))))
+            .collect::<Vec<_>>();
 
         dbg!(test_data
-            .map(|(x, y, z)| {
-                (
-                    x.value.borrow().to_owned(),
-                    y.value.borrow().to_owned(),
-                    z.value.borrow().to_owned(),
-                )
-            })
+            .iter()
+            .map(|((x, y), z)| { (x.value.to_owned(), y.value.to_owned(), z.value.to_owned(),) })
             .collect::<Vec<_>>());
 
-        let mut nn = NN::new();
+        let mut nn = NeuralNetwork::new();
         nn.add_layer((2, 3), Value::relu);
         nn.add_layer((3, 1), Value::sigmoid);
 
+        // do optimization by hand
+        fn loss(output: &Value, target: &Value) -> Value {
+            let diff = target - output;
+            &diff * &diff
+        }
 
+        const LEARNING_RATE: f32 = 0.01;
+        const EPOCHS: usize = 100;
 
+        let mut avg_losses: Vec<f32> = vec![];
+
+        for _ in 0..EPOCHS {
+            let mut losses = vec![];
+            for ((x, y), target) in test_data.iter().cloned() {
+                let output = nn.forward(vec![x.clone(), y.clone()])[0].clone();
+                let mut loss = loss(&output, &target);
+                loss.back_prop();
+                losses.push(*loss.value.borrow());
+                nn.parameters().for_each(|param| {
+                    *param.value.borrow_mut() -= LEARNING_RATE * *param.grad.borrow();
+                });
+            }
+            avg_losses.push(losses.iter().sum::<f32>() / losses.len() as f32);
+            
+        }
+
+        let mut plot = Plot::new();
+        let trace = Scatter::new((0..avg_losses.len()).collect::<Vec<_>>(), avg_losses)
+            .mode(Mode::Markers)
+            .name("Loss");
+        plot.add_trace(trace);
+        plot.write_html("test-losses.html");
 
     }
 }

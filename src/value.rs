@@ -14,6 +14,17 @@ pub struct Value {
     previous: Option<Rc<Vec<Value>>>,
 }
 
+impl Clone for Value {
+    fn clone(&self) -> Self {
+        Value {
+            value: self.value.clone(),
+            grad: self.grad.clone(),
+            backward: None,
+            previous: self.previous.clone(),
+        }
+    }
+}
+
 fn build_sort<'a>(
     s: &'a Value,
     sort: &mut Vec<&'a Value>,

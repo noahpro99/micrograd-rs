@@ -1,5 +1,5 @@
+mod neural_network;
 mod value;
-mod nn;
 // re export
+pub use neural_network::NeuralNetwork;
 pub use value::Value;
-pub use nn::NN;
