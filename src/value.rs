@@ -1,6 +1,7 @@
 use std::{
     cell::RefCell,
     collections::HashSet,
+    fmt::Debug,
     iter::Sum,
     ops::{Add, Mul, Sub},
     ptr::NonNull,
@@ -11,7 +12,8 @@ pub struct Value {
     pub value: Rc<RefCell<f32>>,
     pub grad: Rc<RefCell<f32>>,
     backward: Option<Box<dyn Fn(&Self)>>,
-    previous: Option<Rc<Vec<Value>>>,
+    self_rc: Option<Rc<Value>>,
+    previous: Option<Vec<Rc<Value>>>,
 }
 
 impl Clone for Value {
@@ -20,8 +22,18 @@ impl Clone for Value {
             value: self.value.clone(),
             grad: self.grad.clone(),
             backward: None,
+            self_rc: self.self_rc.clone(),
             previous: self.previous.clone(),
         }
+    }
+}
+
+impl Debug for Value {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Value")
+            .field("value", &self.value.borrow())
+            .field("grad", &self.grad.borrow())
+            .finish()
     }
 }
 
@@ -42,14 +54,27 @@ fn build_sort<'a>(
     sort.push(s);
 }
 
+impl From<f32> for Value {
+    fn from(value: f32) -> Self {
+        Value::new(value, None, None)
+    }
+}
+
 impl Value {
-    pub fn new(value: f32, backward: Option<Box<dyn Fn(&Self)>>) -> Value {
-        Value {
+    pub fn new(
+        value: f32,
+        backward: Option<Box<dyn Fn(&Self)>>,
+        previous: Option<Vec<Rc<Value>>>,
+    ) -> Value {
+        let mut value = Value {
             value: Rc::new(RefCell::new(value)),
             grad: Rc::new(RefCell::new(0.0)),
             backward,
-            previous: None,
-        }
+            self_rc: None,
+            previous,
+        };
+        value.self_rc = Some(Rc::new(value.clone()));
+        value
     }
 
     pub fn relu(value: Value) -> Value {
@@ -66,6 +91,7 @@ impl Value {
                         _ => 0.0,
                     };
             })),
+            Some(vec![value.self_rc.unwrap().clone()]),
         )
     }
 
@@ -76,6 +102,7 @@ impl Value {
                 *value.grad.borrow_mut() +=
                     *out.grad.borrow() * *out.value.borrow() * (1.0 - *out.value.borrow());
             })),
+            Some(vec![value.self_rc.unwrap().clone()]),
         )
     }
 
@@ -89,6 +116,7 @@ impl Value {
                 *self_grad.borrow_mut() +=
                     *out.grad.borrow() * n as f32 * (*self_value.borrow()).powi(n - 1);
             })),
+            Some(vec![self.self_rc.clone().unwrap()]),
         )
     }
 
@@ -97,6 +125,7 @@ impl Value {
         let mut sort: Vec<&Value> = vec![];
         let mut visited: HashSet<NonNull<&Value>> = HashSet::new();
         build_sort(self, &mut sort, &mut visited);
+        dbg!(&sort);
 
         for s in sort.iter().rev() {
             if let Some(backward) = &s.backward {
@@ -121,13 +150,17 @@ impl Mul<&Value> for &Value {
                 *self_grad.borrow_mut() += *out.grad.borrow() * *other_value.borrow();
                 *other_grad.borrow_mut() += *out.grad.borrow() * *self_value.borrow();
             })),
+            Some(vec![
+                self.self_rc.clone().unwrap(),
+                other.self_rc.clone().unwrap(),
+            ]),
         )
     }
 }
 
 impl Sum for Value {
     fn sum<I: Iterator<Item = Value>>(iter: I) -> Value {
-        iter.fold(Value::new(0.0, None), |acc, x| &acc + &x)
+        iter.fold(Value::new(0.0, None, None), |acc, x| &acc + &x)
     }
 }
 
@@ -144,6 +177,10 @@ impl Add<&Value> for &Value {
                 *self_grad.borrow_mut() += *out.grad.borrow();
                 *other_grad.borrow_mut() += *out.grad.borrow();
             })),
+            Some(vec![
+                self.self_rc.clone().unwrap(),
+                other.self_rc.clone().unwrap(),
+            ]),
         )
     }
 }
@@ -161,6 +198,10 @@ impl Sub<&Value> for &Value {
                 *self_grad.borrow_mut() += *out.grad.borrow();
                 *other_grad.borrow_mut() -= *out.grad.borrow();
             })),
+            Some(vec![
+                self.self_rc.clone().unwrap(),
+                other.self_rc.clone().unwrap(),
+            ]),
         )
     }
 }
@@ -171,8 +212,8 @@ mod tests {
 
     #[test]
     fn add() {
-        let v1 = Value::new(2.0, None);
-        let v2 = Value::new(3.0, None);
+        let v1 = Value::from(2.0);
+        let v2 = Value::from(3.0);
         let mut v3 = &v1 + &v2;
         v3.back_prop();
 
@@ -183,8 +224,8 @@ mod tests {
 
     #[test]
     fn sub() {
-        let v1 = Value::new(2.0, None);
-        let v2 = Value::new(3.0, None);
+        let v1 = Value::new(2.0, None, None);
+        let v2 = Value::new(3.0, None, None);
         let mut v3 = &v1 - &v2;
         v3.back_prop();
 
@@ -194,9 +235,35 @@ mod tests {
     }
 
     #[test]
+    fn pow() {
+        let v1 = Value::new(2.0, None, None);
+        let mut v3 = v1.pow(3);
+        v3.back_prop();
+
+        assert_eq!(v3.value.borrow().to_owned(), 8.0);
+        assert_eq!(v1.grad.borrow().to_owned(), 12.0);
+    }
+
+    #[test]
+    fn loss_fn() {
+        let output = Value::new(2.0, None, None);
+        let target = Value::new(3.0, None, None);
+        let mut loss = (&output - &target).pow(2);
+        loss.back_prop();
+
+        dbg!(&loss);
+        dbg!(&output);
+        dbg!(&target);
+
+        assert_eq!(*loss.value.borrow(), 1.0);
+        assert_eq!(*target.grad.borrow(), 2.0);
+        assert_eq!(*output.grad.borrow(), -2.0);
+    }
+
+    #[test]
     fn mul() {
-        let v1 = Value::new(2.0, None);
-        let v2 = Value::new(3.0, None);
+        let v1 = Value::new(2.0, None, None);
+        let v2 = Value::new(3.0, None, None);
         let mut v3 = &v1 * &v2;
         v3.back_prop();
 
