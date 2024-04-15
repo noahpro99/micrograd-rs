@@ -2,7 +2,7 @@ use std::{
     cell::RefCell,
     collections::HashSet,
     iter::Sum,
-    ops::{Add, Mul},
+    ops::{Add, Mul, Sub},
     ptr::NonNull,
     rc::Rc,
 };
@@ -39,6 +39,46 @@ impl Value {
             backward,
             previous: None,
         }
+    }
+
+    pub fn relu(value: Value) -> Value {
+        let value_clone = value.value.clone(); // Clone the value before moving it into the closure
+        Value::new(
+            match *value.value.borrow() {
+                x if x > 0.0 => x,
+                _ => 0.0,
+            },
+            Some(Box::new(move |out: &Value| {
+                *value.grad.borrow_mut() += *out.grad.borrow()
+                    * match *value_clone.borrow() {
+                        x if x > 0.0 => 1.0,
+                        _ => 0.0,
+                    };
+            })),
+        )
+    }
+
+    pub fn sigmoid(value: Value) -> Value {
+        Value::new(
+            1.0 / (1.0 + (-*value.value.borrow()).exp()),
+            Some(Box::new(move |out: &Value| {
+                *value.grad.borrow_mut() +=
+                    *out.grad.borrow() * *out.value.borrow() * (1.0 - *out.value.borrow());
+            })),
+        )
+    }
+
+    pub fn pow(&self, n: i32) -> Value {
+        let self_value = self.value.clone();
+        let self_grad = self.grad.clone();
+
+        Value::new(
+            self.value.borrow().powi(n),
+            Some(Box::new(move |out: &Value| {
+                *self_grad.borrow_mut() +=
+                    *out.grad.borrow() * n as f32 * (*self_value.borrow()).powi(n - 1);
+            })),
+        )
     }
 
     pub fn back_prop(&mut self) {
@@ -97,6 +137,23 @@ impl Add<&Value> for &Value {
     }
 }
 
+impl Sub<&Value> for &Value {
+    type Output = Value;
+
+    fn sub(self, other: &Value) -> Value {
+        let self_grad = self.grad.clone();
+        let other_grad = other.grad.clone();
+
+        Value::new(
+            *self.value.borrow() - *other.value.borrow(),
+            Some(Box::new(move |out: &Value| {
+                *self_grad.borrow_mut() += *out.grad.borrow();
+                *other_grad.borrow_mut() -= *out.grad.borrow();
+            })),
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -111,6 +168,18 @@ mod tests {
         assert_eq!(v3.value.borrow().to_owned(), 5.0);
         assert_eq!(v1.grad.borrow().to_owned(), 1.0);
         assert_eq!(v2.grad.borrow().to_owned(), 1.0);
+    }
+
+    #[test]
+    fn sub() {
+        let v1 = Value::new(2.0, None);
+        let v2 = Value::new(3.0, None);
+        let mut v3 = &v1 - &v2;
+        v3.back_prop();
+
+        assert_eq!(v3.value.borrow().to_owned(), -1.0);
+        assert_eq!(v1.grad.borrow().to_owned(), 1.0);
+        assert_eq!(v2.grad.borrow().to_owned(), -1.0);
     }
 
     #[test]

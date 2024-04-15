@@ -65,10 +65,51 @@ mod tests {
     #[test]
     fn test_nn() {
         let mut nn = NN::new();
-        nn.add_layer((2, 3), |x| x);
-        nn.add_layer((3, 1), |x| x);
+        nn.add_layer((2, 3), Value::relu);
+        nn.add_layer((3, 1), Value::relu);
         let input = vec![Value::new(1.0, None), Value::new(2.0, None)];
         let output = nn.forward(input);
         assert_eq!(output.len(), 1);
+    }
+
+    #[test]
+    fn small_dataset() {
+        fn test_fn((x, y): (&Value, &Value)) -> Value {
+            let raw = &(&x.pow(2) + &y.pow(2)) - &Value::new(3.0, None);
+            Value::new(
+                if raw.value.borrow().is_sign_positive() {
+                    1.0
+                } else {
+                    -1.0
+                },
+                None,
+            )
+        }
+
+        // points around -3 to 3 in x and y
+        let grid = (-3..=3)
+            .flat_map(|x| {
+                (-3..=3).map(move |y| (Value::new(x as f32, None), Value::new(y as f32, None)))
+            })
+            .collect::<Vec<_>>();
+        let test_data = grid.iter().map(|(x, y)| (x, y, test_fn((x, y))));
+
+        dbg!(test_data
+            .map(|(x, y, z)| {
+                (
+                    x.value.borrow().to_owned(),
+                    y.value.borrow().to_owned(),
+                    z.value.borrow().to_owned(),
+                )
+            })
+            .collect::<Vec<_>>());
+
+        let mut nn = NN::new();
+        nn.add_layer((2, 3), Value::relu);
+        nn.add_layer((3, 1), Value::sigmoid);
+
+
+
+
     }
 }
