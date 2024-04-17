@@ -108,7 +108,7 @@ impl Value {
             sort.push(v.clone());
         }
 
-        let mut sort = vec![self.clone()];
+        let mut sort = vec![];
         let mut visited = HashSet::new();
         build_sort(&self, &mut sort, &mut visited);
 
