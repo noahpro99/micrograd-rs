@@ -68,8 +68,16 @@ impl Value {
         self.0.borrow().value
     }
 
+    pub fn set_value(&self, value: f32) {
+        self.0.borrow_mut().value = value;
+    }
+
     pub fn grad(&self) -> f32 {
         self.0.borrow().grad
+    }
+
+    pub fn set_grad(&self, grad: f32) {
+        self.0.borrow_mut().grad = grad;
     }
 
     pub fn back_prop(&self) {
@@ -86,6 +94,20 @@ impl Value {
             }
         }
     }
+
+    pub fn print_graph(&self) {
+        let mut stack = vec![(self.clone(), 0)]; // Include depth in the stack
+        while let Some((v, depth)) = stack.pop() {
+            let indent = "  ".repeat(depth);
+            println!("{}{:?}", indent, v.0.borrow());
+            if let Some(previous) = &v.0.borrow().previous {
+                for p in previous {
+                    stack.push((p.clone(), depth + 1)); // Increase depth for children
+                }
+            }
+        }
+    }
+    
 }
 
 impl Debug for Value {
@@ -94,7 +116,6 @@ impl Debug for Value {
             .field("value", &self.value())
             .field("grad", &self.grad())
             .field("op", &self.0.borrow().op)
-            .field("previous", &self.0.borrow().previous)
             .finish()
     }
 }
@@ -147,9 +168,9 @@ impl Neg for &Value {
     }
 }
 
-impl<'a> Sum<&'a Value> for Value {
-    fn sum<I: Iterator<Item = &'a Value>>(iter: I) -> Self {
-        iter.fold(Value::from(0.0), |acc, x| &acc + x)
+impl Sum for Value {
+    fn sum<I: Iterator<Item = Value>>(iter: I) -> Self {
+        iter.fold(Value::from(0.0), |acc, x| &acc + &x)
     }
 }
 
@@ -245,8 +266,8 @@ impl Value {
         Value::new(
             1.0 / (1.0 + (-self.value()).exp()),
             Some(Box::new(move |out: &Value| {
-                let grad_increase = out.grad() * (1.0 - self_clone.borrow().value)
-                    * self_clone.borrow().value;
+                let grad_increase =
+                    out.grad() * (1.0 - self_clone.borrow().value) * self_clone.borrow().value;
                 self_clone.borrow_mut().grad += grad_increase;
             })),
             Some("sigmoid".to_string()),
