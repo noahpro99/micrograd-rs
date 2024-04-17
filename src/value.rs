@@ -1,5 +1,6 @@
 use std::{
     cell::RefCell,
+    collections::HashSet,
     fmt::Debug,
     iter::Sum,
     ops::{Add, Mul, Neg, Sub},
@@ -80,21 +81,6 @@ impl Value {
         self.0.borrow_mut().grad = grad;
     }
 
-    pub fn back_prop(&self) {
-        self.0.borrow_mut().grad = 1.0;
-        let mut stack = vec![self.clone()];
-        while let Some(v) = stack.pop() {
-            if let Some(backward) = &v.0.borrow().backward {
-                backward(&v);
-            }
-            if let Some(previous) = &v.0.borrow().previous {
-                for p in previous {
-                    stack.push(p.clone());
-                }
-            }
-        }
-    }
-
     pub fn print_graph(&self) {
         let mut stack = vec![(self.clone(), 0)]; // Include depth in the stack
         while let Some((v, depth)) = stack.pop() {
@@ -107,7 +93,32 @@ impl Value {
             }
         }
     }
-    
+
+    pub fn back_prop(&self) {
+        fn build_sort(v: &Value, sort: &mut Vec<Value>, visited: &mut HashSet<Value>) {
+            if visited.contains(v) {
+                return;
+            }
+            visited.insert(v.clone());
+            if let Some(previous) = &v.0.borrow().previous {
+                for p in previous {
+                    build_sort(&p, sort, visited);
+                }
+            }
+            sort.push(v.clone());
+        }
+
+        let mut sort = vec![self.clone()];
+        let mut visited = HashSet::new();
+        build_sort(&self, &mut sort, &mut visited);
+
+        self.0.borrow_mut().grad = 1.0;
+        for v in sort.iter().rev() {
+            if let Some(backward) = &v.0.borrow().backward {
+                backward(v);
+            }
+        }
+    }
 }
 
 impl Debug for Value {
@@ -210,8 +221,10 @@ impl Mul<&Value> for &Value {
         Value::new(
             self.value() * other.value(),
             Some(Box::new(move |out: &Value| {
-                self_clone.borrow_mut().grad += out.grad() * other_clone.borrow().value;
-                other_clone.borrow_mut().grad += out.grad() * self_clone.borrow().value;
+                let self_grad_increase = out.grad() * other_clone.borrow().value;
+                let other_grad_increase = out.grad() * self_clone.borrow().value;
+                self_clone.borrow_mut().grad += self_grad_increase;
+                other_clone.borrow_mut().grad += other_grad_increase;
             })),
             Some("mul".to_string()),
             Some(vec![
@@ -376,5 +389,22 @@ mod tests {
         assert_eq!(v5.value(), 100.0);
         assert_eq!(v1.grad(), 140.0);
         assert_eq!(v2.grad(), 40.0);
+    }
+
+    #[test]
+    fn another_long_chain() {
+        let x = Value::from(-4.0);
+        let z = &(&(&x * &Value::from(2.0)) + &Value::from(2.0)) + &x;
+        let q = &(z.relu()) + &(&z * &x);
+        let h = (&z * &z).relu();
+        let y = &(&h + &q) + &(&q * &x);
+        y.back_prop();
+
+        assert_eq!(x.value(), -4.0);
+        assert_eq!(z.value(), -10.0);
+        assert_eq!(y.value(), -20.0);
+
+        assert_eq!(x.grad(), 46.0);
+        assert_eq!(z.grad(), -8.0);
     }
 }
