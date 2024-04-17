@@ -1,4 +1,9 @@
-use std::{cell::RefCell, fmt::Debug, ops::Add, rc::Rc};
+use std::{
+    cell::RefCell,
+    fmt::Debug,
+    ops::{Add, Mul, Sub},
+    rc::Rc,
+};
 
 struct InternalValue {
     value: f32,
@@ -72,7 +77,6 @@ impl Value {
     pub fn back_prop(&self) {
         self.0.borrow_mut().grad = 1.0;
         let mut stack = vec![self.clone()];
-        dbg!(&stack);
         while let Some(v) = stack.pop() {
             if let Some(backward) = &v.0.borrow().backward {
                 backward(&v);
@@ -107,22 +111,88 @@ impl Add<&Value> for &Value {
     type Output = Value;
 
     fn add(self, other: &Value) -> Value {
-        let self_clone_backward = self.0.clone();
-        let other_clone_backward = other.0.clone();
+        let self_clone = self.0.clone();
+        let other_clone = other.0.clone();
         let self_clone_previous = self.0.clone();
         let other_clone_previous = other.0.clone();
 
         Value::new(
             self.value() + other.value(),
             Some(Box::new(move |out: &Value| {
-                self_clone_backward.borrow_mut().grad += out.grad();
-                other_clone_backward.borrow_mut().grad += out.grad();
+                self_clone.borrow_mut().grad += out.grad();
+                other_clone.borrow_mut().grad += out.grad();
             })),
             Some("add".to_string()),
             Some(vec![
                 Value(self_clone_previous),
                 Value(other_clone_previous),
             ]),
+        )
+    }
+}
+
+impl Sub<&Value> for &Value {
+    type Output = Value;
+
+    fn sub(self, other: &Value) -> Value {
+        let self_clone = self.0.clone();
+        let other_clone = other.0.clone();
+        let self_clone_previous = self.0.clone();
+        let other_clone_previous = other.0.clone();
+
+        Value::new(
+            self.value() - other.value(),
+            Some(Box::new(move |out: &Value| {
+                self_clone.borrow_mut().grad += out.grad();
+                other_clone.borrow_mut().grad -= out.grad();
+            })),
+            Some("sub".to_string()),
+            Some(vec![
+                Value(self_clone_previous),
+                Value(other_clone_previous),
+            ]),
+        )
+    }
+}
+
+impl Mul<&Value> for &Value {
+    type Output = Value;
+
+    fn mul(self, other: &Value) -> Value {
+        let self_clone = self.0.clone();
+        let other_clone = other.0.clone();
+        let self_clone_previous = self.0.clone();
+        let other_clone_previous = other.0.clone();
+
+        Value::new(
+            self.value() * other.value(),
+            Some(Box::new(move |out: &Value| {
+                self_clone.borrow_mut().grad += out.grad() * other_clone.borrow().value;
+                other_clone.borrow_mut().grad += out.grad() * self_clone.borrow().value;
+            })),
+            Some("mul".to_string()),
+            Some(vec![
+                Value(self_clone_previous),
+                Value(other_clone_previous),
+            ]),
+        )
+    }
+}
+
+impl Value {
+    pub fn pow(&self, n: u32) -> Value {
+        let self_clone = self.0.clone();
+        let self_clone_previous = self.0.clone();
+
+        Value::new(
+            self.value().powf(n as f32),
+            Some(Box::new(move |out: &Value| {
+                let grad_increase =
+                    out.grad() * n as f32 * self_clone.borrow().value.powf(n as f32 - 1.0);
+                self_clone.borrow_mut().grad += grad_increase;
+            })),
+            Some("pow".to_string()),
+            Some(vec![Value(self_clone_previous)]),
         )
     }
 }
@@ -162,54 +232,70 @@ mod tests {
         assert_eq!(hs.len(), 2);
     }
 
-    // #[test]
-    // fn sub() {
-    //     let v1 = InternalValue::from(2.0);
-    //     let v2 = InternalValue::from(3.0);
-    //     let mut v3 = &v1 - &v2;
-    //     v3.back_prop();
+    #[test]
+    fn sub() {
+        let v1 = Value::from(2.0);
+        let v2 = Value::from(3.0);
+        let v3 = &v1 - &v2;
+        v3.back_prop();
 
-    //     assert_eq!(v3.value.borrow().to_owned(), -1.0);
-    //     assert_eq!(v1.grad.borrow().to_owned(), 1.0);
-    //     assert_eq!(v2.grad.borrow().to_owned(), -1.0);
-    // }
+        assert_eq!(v3.value(), -1.0);
+        assert_eq!(v1.grad(), 1.0);
+        assert_eq!(v2.grad(), -1.0);
+    }
 
-    // #[test]
-    // fn pow() {
-    //     let v1 = InternalValue::from(2.0);
-    //     let mut v3 = v1.pow(3);
-    //     v3.back_prop();
+    #[test]
+    fn mul() {
+        let v1 = Value::from(2.0);
+        let v2 = Value::from(3.0);
+        let v3 = &v1 * &v2;
+        v3.back_prop();
 
-    //     assert_eq!(v3.value.borrow().to_owned(), 8.0);
-    //     assert_eq!(v1.grad.borrow().to_owned(), 12.0);
-    // }
+        assert_eq!(v3.value(), 6.0);
+        assert_eq!(v1.grad(), 3.0);
+        assert_eq!(v2.grad(), 2.0);
+    }
 
-    // #[test]
-    // fn loss_fn() {
-    //     let output = InternalValue::from(2.0);
-    //     let target = InternalValue::from(3.0);
+    #[test]
+    fn pow() {
+        let v1 = Value::from(2.0);
+        let v3 = v1.pow(3);
+        dbg!(&v3);
+        v3.back_prop();
+        dbg!(&v3);
 
-    //     let mut loss = (&output - &target).pow(2);
-    //     loss.back_prop();
+        assert_eq!(v3.value(), 8.0);
+        assert_eq!(v1.grad(), 12.0);
+    }
 
-    //     dbg!(&loss);
-    //     dbg!(&output);
-    //     dbg!(&target);
+    #[test]
+    fn loss_fn() {
+        let output = Value::from(2.0);
+        let target = Value::from(3.0);
 
-    //     assert_eq!(*loss.value.borrow(), 1.0);
-    //     assert_eq!(*target.grad.borrow(), 2.0);
-    //     assert_eq!(*output.grad.borrow(), -2.0);
-    // }
+        let loss = (&output - &target).pow(2);
+        loss.back_prop();
 
-    // #[test]
-    // fn mul() {
-    //     let v1 = InternalValue::from(2.0);
-    //     let v2 = InternalValue::from(3.0);
-    //     let mut v3 = &v1 * &v2;
-    //     v3.back_prop();
+        dbg!(&loss);
+        dbg!(&output);
+        dbg!(&target);
 
-    //     assert_eq!(v3.value.borrow().to_owned(), 6.0);
-    //     assert_eq!(v1.grad.borrow().to_owned(), 3.0);
-    //     assert_eq!(v2.grad.borrow().to_owned(), 2.0);
-    // }
+        assert_eq!(loss.value(), 1.0);
+        assert_eq!(target.grad(), 2.0);
+        assert_eq!(output.grad(), -2.0);
+    }
+
+    #[test]
+    fn longer_chain() {
+        let v1 = Value::from(2.0);
+        let v2 = Value::from(3.0);
+        let v3 = &v1 + &v2;
+        let v4 = &v3 * &v1;
+        let v5 = &v4.pow(2);
+        v5.back_prop();
+
+        assert_eq!(v5.value(), 100.0);
+        assert_eq!(v1.grad(), 140.0);
+        assert_eq!(v2.grad(), 40.0);
+    }
 }
