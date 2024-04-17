@@ -1,7 +1,8 @@
 use std::{
     cell::RefCell,
     fmt::Debug,
-    ops::{Add, Mul, Sub},
+    iter::Sum,
+    ops::{Add, Mul, Neg, Sub},
     rc::Rc,
 };
 
@@ -131,6 +132,30 @@ impl Add<&Value> for &Value {
     }
 }
 
+impl Neg for &Value {
+    type Output = Value;
+
+    fn neg(self) -> Value {
+        let self_clone = self.0.clone();
+        let self_clone_previous = self.0.clone();
+
+        Value::new(
+            -self.value(),
+            Some(Box::new(move |out: &Value| {
+                self_clone.borrow_mut().grad -= out.grad();
+            })),
+            Some("neg".to_string()),
+            Some(vec![Value(self_clone_previous)]),
+        )
+    }
+}
+
+impl<'a> Sum<&'a Value> for Value {
+    fn sum<I: Iterator<Item = &'a Value>>(iter: I) -> Self {
+        iter.fold(Value::from(0.0), |acc, x| &acc + x)
+    }
+}
+
 impl Sub<&Value> for &Value {
     type Output = Value;
 
@@ -192,6 +217,42 @@ impl Value {
                 self_clone.borrow_mut().grad += grad_increase;
             })),
             Some("pow".to_string()),
+            Some(vec![Value(self_clone_previous)]),
+        )
+    }
+
+    pub fn relu(&self) -> Value {
+        let self_clone = self.0.clone();
+        let self_clone_previous = self.0.clone();
+
+        Value::new(
+            self.value().max(0.0),
+            Some(Box::new(move |out: &Value| {
+                let grad_increase = out.grad()
+                    * if self_clone.borrow().value > 0.0 {
+                        1.0
+                    } else {
+                        0.0
+                    };
+                self_clone.borrow_mut().grad += grad_increase;
+            })),
+            Some("relu".to_string()),
+            Some(vec![Value(self_clone_previous)]),
+        )
+    }
+
+    pub fn sigmoid(&self) -> Value {
+        let self_clone = self.0.clone();
+        let self_clone_previous = self.0.clone();
+
+        Value::new(
+            1.0 / (1.0 + (-self.value()).exp()),
+            Some(Box::new(move |out: &Value| {
+                let grad_increase = out.grad() * (1.0 - self_clone.borrow().value)
+                    * self_clone.borrow().value;
+                self_clone.borrow_mut().grad += grad_increase;
+            })),
+            Some("sigmoid".to_string()),
             Some(vec![Value(self_clone_previous)]),
         )
     }
