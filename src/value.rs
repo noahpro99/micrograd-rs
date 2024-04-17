@@ -11,7 +11,6 @@ struct InternalValue {
     grad: f32,
     backward: Option<Box<dyn Fn(&Value)>>,
     op: Option<String>,
-    self_rc: Option<Value>,
     previous: Option<Vec<Value>>,
 }
 
@@ -60,10 +59,8 @@ impl Value {
             grad: 0.0,
             backward,
             op,
-            self_rc: None,
             previous,
         }));
-        value.borrow_mut().self_rc = Some(Value(value.clone()));
         Value(value)
     }
 
