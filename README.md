@@ -1,6 +1,6 @@
 # micrograd.rs
 
-A tiny autograd engine for learning purposes in Rust.
+A tiny autograd engine for learning purposes in Rust. Based on the Python version [micrograd](https://github.com/karpathy/micrograd).
 
 ![Sample Trained Model](images/image.png)
 
@@ -28,4 +28,5 @@ assert_eq!(v2.grad(), 40.0);
 - [x] Create `Value` struct with computational graph
 - [x] Test on some test data
 - [ ] Implement graphing of computational graph
-- 
+
+*This project is in no way endorsed by the Rust Foundation.*
