@@ -23,12 +23,12 @@ impl NeuralNetwork {
         let weights = (0..output_size)
             .map(|_| {
                 (0..input_size)
-                    .map(|_| Value::new(rand::random::<f32>() - 0.5, None, None))
+                    .map(|_| Value::from(rand::random::<f32>() - 0.5))
                     .collect()
             })
             .collect();
         let biases = (0..output_size)
-            .map(|_| Value::new(rand::random::<f32>() - 0.5, None, None))
+            .map(|_| Value::from(rand::random::<f32>() - 0.5))
             .collect();
         self.layers.push(Layer {
             weights,
@@ -80,7 +80,7 @@ mod tests {
         let mut nn = NeuralNetwork::new();
         nn.add_layer((2, 3), Value::relu);
         nn.add_layer((3, 1), Value::relu);
-        let input = vec![Value::new(1.0, None, None), Value::new(2.0, None, None)];
+        let input = vec![Value::from(1.0), Value::from(2.0)];
         let output = nn.forward(input);
         assert_eq!(output.len(), 1);
     }
@@ -88,23 +88,17 @@ mod tests {
     #[test]
     fn small_dataset() {
         fn test_fn((x, y): (&Value, &Value)) -> Value {
-            let raw = &(&x.pow(2) + &y.pow(2)) - &Value::new(3.0, None, None);
-            Value::new(
-                if raw.value.borrow().is_sign_positive() {
-                    1.0
-                } else {
-                    0.0
-                },
-                None,
-                None,
-            )
+            let raw = &(&x.pow(2) + &y.pow(2)) - &Value::from(3.0);
+            Value::from(if raw.value.borrow().is_sign_positive() {
+                1.0
+            } else {
+                0.0
+            })
         }
 
         // points around -3 to 3 in x and y
         let grid = (-3..=3)
-            .flat_map(|x| {
-                (-3..=3).map(move |y| (Value::new(x as f32, None, None), Value::new(y as f32, None, None)))
-            })
+            .flat_map(|x| (-3..=3).map(move |y| (Value::from(x as f32), Value::from(y as f32))))
             .collect::<Vec<_>>();
         let test_data = grid
             .iter()

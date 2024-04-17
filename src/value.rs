@@ -2,9 +2,9 @@ use std::{
     cell::RefCell,
     collections::HashSet,
     fmt::Debug,
+    hash::{Hash, Hasher},
     iter::Sum,
     ops::{Add, Mul, Sub},
-    ptr::NonNull,
     rc::Rc,
 };
 
@@ -12,8 +12,23 @@ pub struct Value {
     pub value: Rc<RefCell<f32>>,
     pub grad: Rc<RefCell<f32>>,
     backward: Option<Box<dyn Fn(&Self)>>,
+    op: Option<String>,
     self_rc: Option<Rc<Value>>,
     previous: Option<Vec<Rc<Value>>>,
+}
+
+impl PartialEq for Value {
+    fn eq(&self, other: &Self) -> bool {
+        self.value == other.value
+    }
+}
+
+impl Eq for Value {}
+
+impl Hash for Value {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        Rc::as_ptr(&self.value).hash(state);
+    }
 }
 
 impl Clone for Value {
@@ -22,6 +37,7 @@ impl Clone for Value {
             value: self.value.clone(),
             grad: self.grad.clone(),
             backward: None,
+            op: self.op.clone(),
             self_rc: self.self_rc.clone(),
             previous: self.previous.clone(),
         }
@@ -33,30 +49,14 @@ impl Debug for Value {
         f.debug_struct("Value")
             .field("value", &self.value.borrow())
             .field("grad", &self.grad.borrow())
+            .field("op", &self.op)
             .finish()
     }
 }
 
-fn build_sort<'a>(
-    s: &'a Value,
-    sort: &mut Vec<&'a Value>,
-    visited: &mut HashSet<NonNull<&'a Value>>,
-) {
-    if visited.contains(&NonNull::from(&s)) {
-        return;
-    }
-    visited.insert(NonNull::from(&s));
-    if let Some(previous) = &s.previous {
-        for p in previous.iter() {
-            build_sort(p, sort, visited);
-        }
-    }
-    sort.push(s);
-}
-
 impl From<f32> for Value {
     fn from(value: f32) -> Self {
-        Value::new(value, None, None)
+        Value::new(value, None, None, None)
     }
 }
 
@@ -64,17 +64,21 @@ impl Value {
     pub fn new(
         value: f32,
         backward: Option<Box<dyn Fn(&Self)>>,
+        op: Option<String>,
         previous: Option<Vec<Rc<Value>>>,
     ) -> Value {
-        let mut value = Value {
+        let mut value = Rc::new(Value {
             value: Rc::new(RefCell::new(value)),
             grad: Rc::new(RefCell::new(0.0)),
             backward,
+            op,
             self_rc: None,
             previous,
-        };
-        value.self_rc = Some(Rc::new(value.clone()));
-        value
+        });
+        let weak = Rc::downgrade(&value);
+        Rc::get_mut(&mut value).unwrap().self_rc = Some(value.clone());
+
+        return value;
     }
 
     pub fn relu(value: Value) -> Value {
@@ -91,6 +95,7 @@ impl Value {
                         _ => 0.0,
                     };
             })),
+            Some("relu".to_string()),
             Some(vec![value.self_rc.unwrap().clone()]),
         )
     }
@@ -102,6 +107,7 @@ impl Value {
                 *value.grad.borrow_mut() +=
                     *out.grad.borrow() * *out.value.borrow() * (1.0 - *out.value.borrow());
             })),
+            Some("sigmoid".to_string()),
             Some(vec![value.self_rc.unwrap().clone()]),
         )
     }
@@ -113,9 +119,13 @@ impl Value {
         Value::new(
             self.value.borrow().powi(n),
             Some(Box::new(move |out: &Value| {
+                println!("running backward pow! with n: {}", n);
+                println!("self_grad before: {}", *self_grad.borrow());
                 *self_grad.borrow_mut() +=
                     *out.grad.borrow() * n as f32 * (*self_value.borrow()).powi(n - 1);
+                println!("self_grad after: {}", *self_grad.borrow());
             })),
+            Some("pow".to_string()),
             Some(vec![self.self_rc.clone().unwrap()]),
         )
     }
@@ -123,9 +133,11 @@ impl Value {
     pub fn back_prop(&mut self) {
         self.grad = Rc::new(RefCell::new(1.0));
         let mut sort: Vec<&Value> = vec![];
-        let mut visited: HashSet<NonNull<&Value>> = HashSet::new();
-        build_sort(self, &mut sort, &mut visited);
+        let mut visited: HashSet<&Value> = HashSet::new();
+        build_sort(Box::new(self), &mut sort, &mut visited);
+        dbg!("all done sorting the graph!");
         dbg!(&sort);
+        dbg!(&visited);
 
         for s in sort.iter().rev() {
             if let Some(backward) = &s.backward {
@@ -133,6 +145,19 @@ impl Value {
             }
         }
     }
+}
+
+fn build_sort<'a>(s: Box<&'a Value>, sort: &mut Vec<&'a Value>, visited: &mut HashSet<&'a Value>) {
+    if visited.contains(s.as_ref()) {
+        return;
+    }
+    visited.insert(s.as_ref());
+    if let Some(previous) = &s.previous {
+        for p in previous.iter() {
+            build_sort(Box::new(p), sort, visited);
+        }
+    }
+    sort.push(s.as_ref());
 }
 
 impl Mul<&Value> for &Value {
@@ -150,6 +175,7 @@ impl Mul<&Value> for &Value {
                 *self_grad.borrow_mut() += *out.grad.borrow() * *other_value.borrow();
                 *other_grad.borrow_mut() += *out.grad.borrow() * *self_value.borrow();
             })),
+            Some("mul".to_string()),
             Some(vec![
                 self.self_rc.clone().unwrap(),
                 other.self_rc.clone().unwrap(),
@@ -160,7 +186,7 @@ impl Mul<&Value> for &Value {
 
 impl Sum for Value {
     fn sum<I: Iterator<Item = Value>>(iter: I) -> Value {
-        iter.fold(Value::new(0.0, None, None), |acc, x| &acc + &x)
+        iter.fold(Value::from(0.), |acc, x| &acc + &x)
     }
 }
 
@@ -177,6 +203,7 @@ impl Add<&Value> for &Value {
                 *self_grad.borrow_mut() += *out.grad.borrow();
                 *other_grad.borrow_mut() += *out.grad.borrow();
             })),
+            Some("add".to_string()),
             Some(vec![
                 self.self_rc.clone().unwrap(),
                 other.self_rc.clone().unwrap(),
@@ -198,6 +225,7 @@ impl Sub<&Value> for &Value {
                 *self_grad.borrow_mut() += *out.grad.borrow();
                 *other_grad.borrow_mut() -= *out.grad.borrow();
             })),
+            Some("sub".to_string()),
             Some(vec![
                 self.self_rc.clone().unwrap(),
                 other.self_rc.clone().unwrap(),
@@ -217,15 +245,15 @@ mod tests {
         let mut v3 = &v1 + &v2;
         v3.back_prop();
 
-        assert_eq!(v3.value.borrow().to_owned(), 5.0);
-        assert_eq!(v1.grad.borrow().to_owned(), 1.0);
-        assert_eq!(v2.grad.borrow().to_owned(), 1.0);
+        assert_eq!(*v3.value.borrow(), 5.0);
+        assert_eq!(*v1.grad.borrow(), 1.0);
+        assert_eq!(*v2.grad.borrow(), 1.0);
     }
 
     #[test]
     fn sub() {
-        let v1 = Value::new(2.0, None, None);
-        let v2 = Value::new(3.0, None, None);
+        let v1 = Value::from(2.0);
+        let v2 = Value::from(3.0);
         let mut v3 = &v1 - &v2;
         v3.back_prop();
 
@@ -236,7 +264,7 @@ mod tests {
 
     #[test]
     fn pow() {
-        let v1 = Value::new(2.0, None, None);
+        let v1 = Value::from(2.0);
         let mut v3 = v1.pow(3);
         v3.back_prop();
 
@@ -246,8 +274,9 @@ mod tests {
 
     #[test]
     fn loss_fn() {
-        let output = Value::new(2.0, None, None);
-        let target = Value::new(3.0, None, None);
+        let output = Value::from(2.0);
+        let target = Value::from(3.0);
+
         let mut loss = (&output - &target).pow(2);
         loss.back_prop();
 
@@ -262,8 +291,8 @@ mod tests {
 
     #[test]
     fn mul() {
-        let v1 = Value::new(2.0, None, None);
-        let v2 = Value::new(3.0, None, None);
+        let v1 = Value::from(2.0);
+        let v2 = Value::from(3.0);
         let mut v3 = &v1 * &v2;
         v3.back_prop();
 
