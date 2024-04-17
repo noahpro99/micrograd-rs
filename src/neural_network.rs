@@ -3,6 +3,7 @@ use crate::value::Value;
 pub enum Activation {
     ReLU,
     Sigmoid,
+    None,
 }
 
 impl Activation {
@@ -10,6 +11,7 @@ impl Activation {
         match self {
             Activation::ReLU => value.relu(),
             Activation::Sigmoid => value.sigmoid(),
+            Activation::None => value.clone(),
         }
     }
 }
@@ -37,12 +39,12 @@ impl NeuralNetwork {
         let weights = (0..output_size)
             .map(|_| {
                 (0..input_size)
-                    .map(|_| Value::from(rand::random::<f32>() - 0.5))
+                    .map(|_| Value::from(rand::random::<f32>() * 0.2 + 0.1))
                     .collect()
             })
             .collect();
         let biases = (0..output_size)
-            .map(|_| Value::from(rand::random::<f32>() - 0.5))
+            .map(|_| Value::from(rand::random::<f32>() * 0.2 + 0.1))
             .collect();
         self.layers.push(Layer {
             weights,
@@ -97,7 +99,7 @@ mod tests {
     fn test_nn() {
         let mut nn = NeuralNetwork::new();
         nn.add_layer((2, 3), Activation::ReLU);
-        nn.add_layer((3, 1), Activation::Sigmoid);
+        nn.add_layer((3, 1), Activation::ReLU);
         let input = vec![Value::from(1.0), Value::from(2.0)];
         let output = nn.forward(input).pop().unwrap();
         output.back_prop();
@@ -105,10 +107,115 @@ mod tests {
     }
 
     #[test]
+    fn squared_model() {
+        let mut data = (0..=10)
+            .map(|x| Value::from(x as f32))
+            .map(|x| (x.clone(), x.pow(2)))
+            .collect::<Vec<_>>();
+        // normalize outputs from 0 to 1
+        let max = data
+            .iter()
+            .map(|(_, y)| y.value())
+            .max_by(|a, b| a.partial_cmp(b).unwrap())
+            .unwrap();
+        data.iter_mut().for_each(|(_, y)| {
+            y.set_value(y.value() / max);
+        });
+
+        let mut nn = NeuralNetwork::new();
+        nn.add_layer((1, 8), Activation::ReLU);
+        nn.add_layer((8, 8), Activation::ReLU);
+        nn.add_layer((8, 1), Activation::Sigmoid);
+
+        // plot data and untrained model
+        let mut plot = Plot::new();
+        let (x, y): (Vec<f32>, Vec<f32>) = data.iter().map(|(x, y)| (x.value(), y.value())).unzip();
+        let trace = Scatter::new(x.clone(), y.clone())
+            .mode(Mode::Markers)
+            .name("Data");
+
+        let outputs = data
+            .iter()
+            .map(|(x, _)| {
+                let output = nn.forward(vec![x.clone()]).pop().unwrap();
+                let output_value = output.value();
+                output_value
+            })
+            .collect::<Vec<_>>();
+
+        let trace2 = Scatter::new(x.clone(), outputs)
+            .mode(Mode::Markers)
+            .name("Untrained");
+
+        plot.add_trace(trace);
+        plot.add_trace(trace2);
+        plot.write_html("squared-model-untrained.html");
+
+        const EPOCHS: usize = 100;
+
+        let mut avg_losses: Vec<f32> = vec![];
+        for epoch in 0..EPOCHS {
+            let losses = data
+                .iter()
+                .map(|(x, target)| {
+                    let output = nn.forward(vec![x.clone()]).pop().unwrap();
+                    let target = target.clone();
+                    let loss = (&output - &target).pow(2);
+                    loss
+                })
+                .collect::<Vec<_>>();
+
+            let total_loss = &losses.into_iter().sum() * &Value::from(1.0 / data.len() as f32);
+            nn.zero_grad();
+            total_loss.back_prop();
+            let learning_rate = 1.0 - 0.95 * (epoch as f32 / EPOCHS as f32);
+            nn.parameters().for_each(|param| {
+                param.set_value(param.value() - learning_rate * param.grad());
+            });
+            avg_losses.push(total_loss.value());
+            dbg!(total_loss.value());
+        }
+
+        let outputs = data
+            .iter()
+            .map(|(x, _)| {
+                let output = nn.forward(vec![x.clone()]).pop().unwrap();
+                let output_value = output.value();
+                output_value
+            })
+            .collect::<Vec<_>>();
+
+        let mut plot = Plot::new();
+        let x = data.iter().map(|(x, _)| x.value()).collect::<Vec<_>>();
+        let y = data.iter().map(|(_, y)| y.value()).collect::<Vec<_>>();
+        let trace = Scatter::new(x.clone(), y.clone())
+            .mode(Mode::Markers)
+            .name("Data");
+
+        let trace2 = Scatter::new(x, outputs).mode(Mode::Markers).name("Trained");
+        plot.add_trace(trace);
+        plot.add_trace(trace2);
+        plot.write_html("squared-model.html");
+
+        // plot losses over training
+        let mut plot = Plot::new();
+        let trace = Scatter::new(
+            (0..avg_losses.len()).collect::<Vec<_>>(),
+            avg_losses.clone(),
+        )
+        .mode(Mode::LinesMarkers)
+        .name("Loss");
+
+        plot.add_trace(trace);
+        plot.write_html("squared-losses.html");
+
+        assert!(avg_losses.last().unwrap() < &0.1);
+    }
+
+    #[test]
     fn small_dataset() {
         fn test_fn((x, y): (&Value, &Value)) -> Value {
-            // let raw = &(&x.pow(2) + &y.pow(2)) - &Value::from(3.0);
-            let raw = x;
+            let raw = &(&x.pow(2) + &y.pow(2)) - &Value::from(3.0);
             Value::from(if raw.value().is_sign_positive() {
                 1.0
             } else {
@@ -126,8 +233,9 @@ mod tests {
             .collect::<Vec<_>>();
 
         let mut nn = NeuralNetwork::new();
-        nn.add_layer((2, 5), Activation::ReLU);
-        nn.add_layer((5, 1), Activation::Sigmoid);
+        nn.add_layer((2, 16), Activation::ReLU);
+        nn.add_layer((16, 16), Activation::ReLU);
+        nn.add_layer((16, 1), Activation::Sigmoid);
 
         let mut plot = Plot::new();
 
@@ -164,19 +272,17 @@ mod tests {
         plot.add_trace(trace2);
         plot.write_html("test-data.html");
 
-        const LEARNING_RATE: f32 = 0.01;
-        const EPOCHS: usize = 900;
+        const EPOCHS: usize = 200;
 
         let mut avg_losses: Vec<f32> = vec![];
-
-        for _ in 0..EPOCHS {
+        for epoch in 0..EPOCHS {
             let losses = test_data
                 .clone()
                 .iter()
                 .map(|((x, y), target)| {
                     let output = nn.forward(vec![(*x).clone(), (*y).clone()]).pop().unwrap();
                     let target = target.clone();
-                    let loss = (&Value::from(1.0) - &(&output * &target)).relu();
+                    let loss = (&output - &target).pow(2);
                     loss
                 })
                 .collect::<Vec<_>>();
@@ -184,8 +290,9 @@ mod tests {
             let total_loss = &losses.into_iter().sum() * &Value::from(1.0 / test_data.len() as f32);
             nn.zero_grad();
             total_loss.back_prop();
+            let learning_rate = 1.0 - 0.9 * (epoch as f32 / EPOCHS as f32);
             nn.parameters().for_each(|param| {
-                param.set_value(param.value() - LEARNING_RATE * param.grad());
+                param.set_value(param.value() - learning_rate * param.grad());
             });
             avg_losses.push(total_loss.value());
             dbg!(total_loss.value());
@@ -215,10 +322,15 @@ mod tests {
 
         // plot losses over training
         let mut plot = Plot::new();
-        let trace = Scatter::new((0..avg_losses.len()).collect::<Vec<_>>(), avg_losses)
-            .mode(Mode::LinesMarkers)
-            .name("Loss");
+        let trace = Scatter::new(
+            (0..avg_losses.len()).collect::<Vec<_>>(),
+            avg_losses.clone(),
+        )
+        .mode(Mode::LinesMarkers)
+        .name("Loss");
         plot.add_trace(trace);
         plot.write_html("test-losses.html");
+
+        assert!(avg_losses.last().unwrap() < &0.1);
     }
 }

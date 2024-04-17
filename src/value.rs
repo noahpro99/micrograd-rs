@@ -279,8 +279,7 @@ impl Value {
         Value::new(
             1.0 / (1.0 + (-self.value()).exp()),
             Some(Box::new(move |out: &Value| {
-                let grad_increase =
-                    out.grad() * (1.0 - self_clone.borrow().value) * self_clone.borrow().value;
+                let grad_increase = out.grad() * out.value() * (1.0 - out.value());
                 self_clone.borrow_mut().grad += grad_increase;
             })),
             Some("sigmoid".to_string()),
@@ -375,6 +374,18 @@ mod tests {
         assert_eq!(loss.value(), 1.0);
         assert_eq!(target.grad(), 2.0);
         assert_eq!(output.grad(), -2.0);
+    }
+
+    #[test]
+    fn relu() {
+        let v1 = Value::from(0.2);
+        let v2 = &v1 * &v1;
+        let v3 = v2.relu();
+
+        v3.back_prop();
+
+        assert!(v3.value() - 0.04 < 1e-6);
+        assert_eq!(v1.grad(), 0.4);
     }
 
     #[test]
